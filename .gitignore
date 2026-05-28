@@ -1,0 +1,15 @@
+# PDF oficial pesa 47MB — no se sube al repo
+recursos/temario-oficial.pdf
+
+# Sistema
+.DS_Store
+*.log
+
+# Editor
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
