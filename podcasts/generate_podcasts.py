@@ -186,16 +186,17 @@ def generate_podcast(md_path: Path, out_path: Path, voice: str = "Monica", rate:
         check=True,
     )
 
-    # Convert aiff to m4a for smaller file size
-    m4a_path = out_path.with_suffix(".m4a")
+    # Convert aiff to mp3
+    mp3_path = out_path.with_suffix(".mp3")
     subprocess.run(
-        ["afconvert", str(aiff_path), str(m4a_path), "-f", "m4af", "-d", "aac"],
-        check=True,
+        ["ffmpeg", "-y", "-i", str(aiff_path), "-codec:a", "libmp3lame", "-qscale:a", "4", str(mp3_path)],
+        check=True, capture_output=True,
     )
 
-    # Cleanup aiff (keep txt for reference)
+    # Cleanup aiff and txt
     aiff_path.unlink()
-    print(f"  → {m4a_path.name} ({m4a_path.stat().st_size / 1024 / 1024:.1f} MB)", flush=True)
+    txt_path.unlink()
+    print(f"  → {mp3_path.name} ({mp3_path.stat().st_size / 1024 / 1024:.1f} MB)", flush=True)
 
 
 def main():
