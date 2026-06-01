@@ -1,93 +1,101 @@
 #!/usr/bin/env python3
-"""Generate Spanish TTS podcasts from markdown temas using macOS 'say'.
+"""Generate Spanish TTS podcasts from markdown temas using Microsoft Edge Neural TTS.
 
-Cleans markdown so the TTS doesn't read symbols (#, *, |, etc.) and
-expands common abbreviations / acronyms so the voice pronounces them
-naturally.
+Uses 'edge-tts' (free, no API key) with neural Spanish voice.
+Cleans markdown so the TTS doesn't read symbols and expands acronyms
+so the voice pronounces them naturally with proper pauses.
 """
+import asyncio
 import re
 import subprocess
 from pathlib import Path
+
+import edge_tts
 
 TEMARIO = Path(__file__).parent.parent / "temario"
 OUT = Path(__file__).parent
 OUT.mkdir(exist_ok=True)
 
-# Acronyms and abbreviations to expand for natural pronunciation
+# Spanish (Spain) neural voice — Elvira is neutral, clear, news-style
+VOICE = "es-ES-ElviraNeural"
+
+# Speaking rate: -10% slower than default for study comfort
+RATE = "-5%"
+
+# Acronyms and abbreviations to expand or spell out
 EXPANSIONS = {
-    # Renfe-specific
     "CCGGT": "Condiciones Generales de Transporte",
-    "OSP": "Obligaciones de Servicio Público",
-    "AVE": "A V E",
+    "OSP": "O. S. P.",
+    "AVE": "A. V. E.",
     "AVLO": "Avlo",
-    "FIP": "F I P",
-    "UIC": "U I C",
+    "FIP": "F. I. P.",
+    "UIC": "U. I. C.",
     "PMR": "personas con movilidad reducida",
     "SGS": "Sistema de Gestión de Seguridad",
     "RFIG": "Red Ferroviaria de Interés General",
     "ADIF": "Adif",
     "ADIF-AV": "Adif Alta Velocidad",
-    "AESF": "A E S F",
-    "CNMC": "C N M C",
-    "CIAF": "C I A F",
-    "EUAR": "E U A R",
-    "ERA": "E R A",
-    "ETCS": "E T C S",
-    "ERTMS": "E R T M S",
+    "AESF": "A. E. S. F.",
+    "CNMC": "C. N. M. C.",
+    "CIAF": "C. I. A. F.",
+    "EUAR": "E. U. A. R.",
+    "ERA": "E. R. A.",
+    "ETCS": "E. T. C. S.",
+    "ERTMS": "E. R. T. M. S.",
     "ASFA": "Asfa",
-    "LZB": "L Z B",
-    "DMI": "D M I",
-    "GSM-R": "GSM Erre",
-    "CTC": "C T C",
-    "ETI": "E T I",
+    "LZB": "L. Z. B.",
+    "DMI": "D. M. I.",
+    "GSM-R": "G. S. M. erre",
+    "CTC": "C. T. C.",
+    "ETI": "E. T. I.",
     "LOIEMH": "Ley Orgánica para la Igualdad Efectiva de Mujeres y Hombres",
-    "RGPD": "Reglamento General de Protección de Datos",
-    "LOPDGDD": "Ley Orgánica de Protección de Datos",
-    "CX": "experiencia de cliente",
-    "UX": "experiencia de usuario",
+    "RGPD": "R. G. P. D.",
+    "LOPDGDD": "L. O. P. D.",
+    "CX": "C. X.",
+    "UX": "U. X.",
     "VoC": "voz del cliente",
-    "NPS": "N P S",
-    "CES": "C E S",
-    "CSAT": "C SAT",
-    "KPI": "K P I",
-    "KPIs": "K P I s",
+    "NPS": "N. P. S.",
+    "CES": "C. E. S.",
+    "CSAT": "C. SAT",
+    "KPI": "K. P. I.",
+    "KPIs": "K. P. I. s",
     "IA": "inteligencia artificial",
-    "FRMCS": "F R M C S",
+    "FRMCS": "F. R. M. C. S.",
     "MD": "Media Distancia",
     "LD": "Larga Distancia",
     "RRHH": "Recursos Humanos",
-    "PRL": "Prevención de Riesgos Laborales",
+    "PRL": "P. R. L.",
     "CC.OO.": "Comisiones Obreras",
-    "U.G.T.": "U G T",
-    "S.E.M.A.F.": "S E M A F",
+    "U.G.T.": "U. G. T.",
+    "S.E.M.A.F.": "S. E. M. A. F.",
     "AGE": "Administración General del Estado",
-    "BOE": "B O E",
-    "DNI": "D N I",
-    "VCX": "V C X",
-    "VOLP": "V O L P",
-    "VOLA": "V O L A",
-    "VAV": "V A V",
-    "VAP/VAN": "V A P, V A N",
-    "VMR": "V M R",
-    "VTE": "V T E",
+    "BOE": "B. O. E.",
+    "DNI": "D. N. I.",
+    "VCX": "V. C. X.",
+    "VOLP": "V. O. L. P.",
+    "VOLA": "V. O. L. A.",
+    "VAV": "V. A. V.",
+    "VAP/VAN": "V. A. P. y V. A. N.",
+    "VMR": "V. M. R.",
+    "VTE": "V. T. E.",
     "ARES": "Ares",
-    "FV": "F V",
-    "RBC": "R B C",
-    "FCR": "F C R",
-    "CAF": "C A F",
-    "SNCF": "S N C F",
-    "DB": "D B",
-    "ÖBB": "O B B",
-    "SBB/CFF": "S B B",
-    "NS": "N S",
-    "SNCB": "S N C B",
-    "CD": "C D",
-    "PKP": "P K P",
-    "MAV": "M A V",
-    "FS": "F S",
-    "CP": "C P",
+    "FV": "F. V.",
+    "RBC": "R. B. C.",
+    "FCR": "F. C. R.",
+    "CAF": "C. A. F.",
+    "SNCF": "S. N. C. F.",
+    "DB": "D. B.",
+    "ÖBB": "Ö. B. B.",
+    "SBB/CFF": "S. B. B.",
+    "NS": "N. S.",
+    "SNCB": "S. N. C. B.",
+    "CD": "C. D.",
+    "PKP": "P. K. P.",
+    "MAV": "M. A. V.",
+    "FS": "F. S.",
+    "CP": "C. P.",
     "FEVE": "Feve",
-    "MZA": "M Z A",
+    "MZA": "M. Z. A.",
     "AV": "Alta Velocidad",
     "LSF": "Ley del Sector Ferroviario",
 }
@@ -95,26 +103,31 @@ EXPANSIONS = {
 
 def clean_markdown(text: str) -> str:
     """Strip markdown formatting and prepare text for natural TTS."""
-    # Remove blockquote markers
+    # Blockquote markers
     text = re.sub(r"^>\s*", "", text, flags=re.MULTILINE)
 
-    # Strip headers (# ## ###) but keep the text
-    text = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE)
+    # Headers (#) -> add period for pause
+    def header_to_pause(m):
+        content = m.group(2).strip()
+        # Remove emoji-like leading chars
+        content = re.sub(r"^[^\w]+", "", content)
+        return f"\n\n{content}.\n\n"
+    text = re.sub(r"^(#+)\s*(.+)$", header_to_pause, text, flags=re.MULTILINE)
 
-    # Remove markdown bold/italic markers
+    # Bold/italic markers
     text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
     text = re.sub(r"\*([^*]+)\*", r"\1", text)
     text = re.sub(r"__([^_]+)__", r"\1", text)
-    text = re.sub(r"_([^_]+)_", r"\1", text)
+    text = re.sub(r"(?<!\w)_([^_]+)_(?!\w)", r"\1", text)
 
-    # Remove inline code backticks
+    # Inline code
     text = re.sub(r"`([^`]+)`", r"\1", text)
 
-    # Remove code blocks
+    # Code blocks
     text = re.sub(r"```[\s\S]*?```", "", text)
 
-    # Remove emoji and special icons commonly used
-    text = re.sub(r"[🚆⚖️🦺💛🚂📑📚📅🧪🔥📝📸🎯⭐⚠️🟦🟧🟩🟠🟡🔴📁🧭💡✅❌📌📊🔑🗺️]", "", text)
+    # Emoji and icons
+    text = re.sub(r"[🚆⚖️🦺💛🚂📑📚📅🧪🔥📝📸🎯⭐⚠️🟦🟧🟩🟠🟡🔴📁🧭💡✅❌📌📊🔑🗺️🇪🇸🇫🇷🇩🇪🇮🇹📍🎧🎙️]", "", text)
 
     # Convert tables to readable prose
     lines = text.split("\n")
@@ -122,13 +135,13 @@ def clean_markdown(text: str) -> str:
     in_table = False
     for line in lines:
         if "|" in line and line.strip().startswith("|"):
-            # Skip separator rows like |---|---|
             if re.match(r"^\s*\|[\s\-:|]+\|\s*$", line):
                 continue
-            # Table row -> read cells with pauses
             cells = [c.strip() for c in line.split("|")[1:-1]]
             cells = [c for c in cells if c]
-            cleaned.append(". ".join(cells) + ".")
+            if cells:
+                # Use ", " as separator + period at end for clear pauses
+                cleaned.append(", ".join(cells) + ".")
             in_table = True
         else:
             if in_table and line.strip() == "":
@@ -136,78 +149,64 @@ def clean_markdown(text: str) -> str:
             cleaned.append(line)
     text = "\n".join(cleaned)
 
-    # Remove markdown links: [text](url) -> text
+    # Markdown links
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
 
-    # Remove bullet markers
+    # Bullets and numbered lists -> period for natural pause
     text = re.sub(r"^[-*+]\s+", "", text, flags=re.MULTILINE)
     text = re.sub(r"^\d+\.\s+", "", text, flags=re.MULTILINE)
 
-    # Remove horizontal rules
+    # Horizontal rules
     text = re.sub(r"^---+$", "", text, flags=re.MULTILINE)
 
-    # Expand acronyms (longest first to avoid partial matches)
+    # Expand acronyms (longest first)
     for acr in sorted(EXPANSIONS.keys(), key=len, reverse=True):
-        # Use word boundaries when possible
         pattern = r"\b" + re.escape(acr) + r"\b"
         text = re.sub(pattern, EXPANSIONS[acr], text)
 
-    # Collapse multiple newlines
-    text = re.sub(r"\n{3,}", "\n\n", text)
-
-    # Remove leftover special chars that confuse TTS
+    # Special chars
     text = text.replace("&", " y ")
-    text = text.replace("→", " a ")
+    text = text.replace("→", ", ")
     text = text.replace("≥", " mayor o igual que ")
     text = text.replace("≤", " menor o igual que ")
-    text = text.replace("⊂", "")
     text = text.replace("~", "aproximadamente ")
     text = text.replace("€", " euros")
     text = text.replace("%", " por ciento")
+    text = text.replace("…", ".")
+
+    # Collapse whitespace
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+
+    # Ensure proper sentence endings
+    text = re.sub(r"\n+", "\n\n", text)
 
     return text.strip()
 
 
-def generate_podcast(md_path: Path, out_path: Path, voice: str = "Monica", rate: int = 200):
-    """Generate an m4a audio file from the markdown."""
+async def synth(text: str, mp3_path: Path):
+    """Generate MP3 directly via edge-tts."""
+    communicate = edge_tts.Communicate(text, VOICE, rate=RATE)
+    await communicate.save(str(mp3_path))
+
+
+def generate_podcast(md_path: Path, out_path: Path):
     raw = md_path.read_text()
     clean = clean_markdown(raw)
 
-    # Write cleaned text to a temp file (say can read from file)
-    txt_path = out_path.with_suffix(".txt")
-    txt_path.write_text(clean)
-
-    aiff_path = out_path.with_suffix(".aiff")
-    print(f"Generating {out_path.name}...", flush=True)
-
-    # say -v Monica -r 200 -f input.txt -o output.aiff
-    subprocess.run(
-        ["say", "-v", voice, "-r", str(rate), "-f", str(txt_path), "-o", str(aiff_path)],
-        check=True,
-    )
-
-    # Convert aiff to mp3
     mp3_path = out_path.with_suffix(".mp3")
-    subprocess.run(
-        ["ffmpeg", "-y", "-i", str(aiff_path), "-codec:a", "libmp3lame", "-qscale:a", "4", str(mp3_path)],
-        check=True, capture_output=True,
-    )
-
-    # Cleanup aiff and txt
-    aiff_path.unlink()
-    txt_path.unlink()
+    print(f"Generating {mp3_path.name}...", flush=True)
+    asyncio.run(synth(clean, mp3_path))
     print(f"  → {mp3_path.name} ({mp3_path.stat().st_size / 1024 / 1024:.1f} MB)", flush=True)
 
 
 def main():
     temas = sorted(TEMARIO.glob("tema-*.md"))
-    print(f"Found {len(temas)} temas. Generating podcasts with voice 'Monica' (es_ES) at 200 wpm...\n")
-
+    print(f"Found {len(temas)} temas. Generating podcasts with {VOICE} at rate {RATE}...\n")
     for md in temas:
         out = OUT / md.stem
         generate_podcast(md, out)
-
-    print("\n✅ Done. Podcasts ready in:", OUT)
+    print("\nDone. Podcasts in:", OUT)
 
 
 if __name__ == "__main__":
